@@ -88,7 +88,6 @@ def create_container_root(image_name, image_dir, container_id, container_dir):
     if not os.path.exists(container_root):
         os.makedirs(container_root)
 
-    # TODO: uncomment (why?)
     # pivot_root(new_root, put_old) requires new_root to be a different filesystem then the old root.
     # To prevent run time errors we mount an overlay filesystem as new_root
     linux.mount('tmpfs', container_root, 'tmpfs', 0, None)
@@ -184,9 +183,10 @@ def contain(command, image_name, image_dir, container_id, container_dir):
 
     # Changes directory to be within the new root
     os.chdir('/')
-
-    linux.umount2('/old_root', linux.MNT_DETACH)  # umount old root
-    os.rmdir('/old_root')  # rmdir the old_root dir
+    # umount old root
+    linux.umount2('/old_root', linux.MNT_DETACH)
+    # rmdir the old_root dir
+    os.rmdir('/old_root')
 
     os.execvp(command[0], command)
 
