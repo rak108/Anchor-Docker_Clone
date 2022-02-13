@@ -82,8 +82,16 @@ def create_container_root(image_name, image_dir, container_id, container_dir):
 
     assert os.path.exists(image_path), "unable to locate image %s" % image_name
 
+    # keep only one rootfs per image and re-use it
+    container_root = _get_container_path(container_id, container_dir, 'rootfs')
+
     if not os.path.exists(container_root):
         os.makedirs(container_root)
+
+    # TODO: uncomment (why?)
+    # pivot_root(new_root, put_old) requires new_root to be a different filesystem then the old root.
+    # To prevent run time errors we mount an overlay filesystem as new_root
+    linux.mount('tmpfs', container_root, 'tmpfs', 0, None)
 
     with tarfile.open(image_path) as t:
         # CHRTYPE and BLKTYPE are device driver files that we don't require
@@ -112,6 +120,28 @@ def makedev(dev_path):
         # mode = 0o666, allows read and write file operations within the created directory
         os.mknod(os.path.join(dev_path, device),
                  0o666 | dev_type, os.makedev(major, minor))
+
+
+def _create_mounts(new_root):
+    # In order to actually access the configurations of the container being created, we require these 3 pseudo-filesystems
+    # proc: information about the real runtime system configurations
+    linux.mount('proc', os.path.join(new_root, 'proc'), 'proc', 0, '')
+    # sys: information about various kernel subsystems, hardware devices, and associated device drivers
+    linux.mount('sysfs', os.path.join(new_root, 'sys'), 'sysfs', 0, '')
+    # tmp: a temporary file storage; acts similar to RAM
+    # NOSUID: prevents the 'suid' bit on executables from taking effect, and thus essentially allows anyone other than
+    # the executables owner to also run the executable;
+    # STRICTATIME: updates the access time of the files every time they are accessed
+    linux.mount('tmpfs', os.path.join(new_root, 'dev'), 'tmpfs',
+                linux.MS_NOSUID | linux.MS_STRICTATIME, 'mode=755')
+
+    # devpts: to enable terminal within the container to allow interactions with the container
+    devpts_path = os.path.join(new_root, 'dev', 'pts')
+    if not os.path.exists(devpts_path):
+        os.makedirs(devpts_path)
+        linux.mount('devpts', devpts_path, 'devpts', 0, '')
+
+    makedev(os.path.join(new_root, 'dev'))
 
 
 def contain(command, image_name, image_dir, container_id, container_dir):
@@ -145,30 +175,18 @@ def contain(command, image_name, image_dir, container_id, container_dir):
         image_name, image_dir, container_id, container_dir)
     print('Created a new root fs for our container: {}'.format(new_root))
 
-    # In order to actually access the configurations of the container being created, we require these 3 pseudo-filesystems
-    # proc: information about the real runtime system configurations
-    linux.mount('proc', os.path.join(new_root, 'proc'), 'proc', 0, '')
-    # sys: information about various kernel subsystems, hardware devices, and associated device drivers
-    linux.mount('sysfs', os.path.join(new_root, 'sys'), 'sysfs', 0, '')
-    # tmp: a temporary file storage; acts similar to RAM
-    # NOSUID: prevents the 'suid' bit on executables from taking effect, and thus essentially allows anyone other than
-    # the executables owner to also run the executable;
-    # STRICTATIME: updates the access time of the files every time they are accessed
-    linux.mount('tmpfs', os.path.join(new_root, 'dev'), 'tmpfs',
-                linux.MS_NOSUID | linux.MS_STRICTATIME, 'mode=755')
+    _create_mounts(new_root)
 
-    # devpts: to enable terminal within the container to allow interactions with the container
-    devpts_path = os.path.join(new_root, 'dev', 'pts')
-    if not os.path.exists(devpts_path):
-        os.makedirs(devpts_path)
-        linux.mount('devpts', devpts_path, 'devpts', 0, '')
+    old_root = os.path.join(new_root, 'old_root')
+    os.makedirs(old_root)
 
-    makedev(os.path.join(new_root, 'dev'))
+    linux.pivot_root(new_root, old_root)
 
-    # Change root directory to the newly created one
-    os.chroot(new_root)
     # Changes directory to be within the new root
     os.chdir('/')
+
+    linux.umount2('/old_root', linux.MNT_DETACH)  # umount old root
+    os.rmdir('/old_root')  # rmdir the old_root dir
 
     os.execvp(command[0], command)
 
@@ -194,13 +212,17 @@ def run(image_name, image_dir, container_dir, command):
     pid = os.fork()
     # if it is the parent process, call the contain function
     if pid == 0:
+        # This is the child, we'll try to do some containment here
         try:
             contain(command, image_name, image_dir, container_id,
                     container_dir)
         except Exception:
             traceback.print_exc()
+            # something went wrong in contain()
             os._exit(1)
 
+    # This is the parent, pid contains the PID of the forked process
+    # wait for the forked child, fetch the exit status
     _, status = os.waitpid(pid, 0)
     print('{} exited with status {}'.format(pid, status))
 
