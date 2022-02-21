@@ -184,10 +184,13 @@ def contain(command, image_name, image_dir, container_id, container_dir):
     try:
         # create a new mount namespace
         linux.unshare(linux.CLONE_NEWNS)
+        linux.unshare(linux.CLONE_NEWUTS)  # switch to a new UTS namespace
+        linux.sethostname(container_id)  # change hostname to container_id
+
         # CLONE_NEWNS provides the child with a new mount namespace (requires ADMIN capability)
     except RuntimeError as e:
         if getattr(e, 'args', '') == (1, 'Operation not permitted'):
-            print('Error: Use of CLONE_NEWNS with unshare(2) requires the '
+            print('Error: Use of CLONE_NEWNS and CLONE_NEWUTS with unshare(2) requires the '
                   'CAP_SYS_ADMIN capability (i.e. you probably want to retry '
                   'this with sudo)')
         raise e
