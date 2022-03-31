@@ -170,7 +170,7 @@ def _create_mounts(new_root):
     makedev(os.path.join(new_root, 'dev'))
 
 
-def contain(command, image_name, image_dir, container_id, container_dir):
+def contain(command, image_name, image_dir, container_id, container_dir, cpu_shares):
     """
     Contain function that is used to actually create the contained space.
 
@@ -183,8 +183,8 @@ def contain(command, image_name, image_dir, container_id, container_dir):
     """
     try:
         # create a new mount namespace
-        linux.unshare(linux.CLONE_NEWNS)
-        linux.unshare(linux.CLONE_NEWUTS)  # switch to a new UTS namespace
+        # linux.unshare(linux.CLONE_NEWNS)
+        # linux.unshare(linux.CLONE_NEWUTS)  # switch to a new UTS namespace
         linux.sethostname(container_id)  # change hostname to container_id
 
         # CLONE_NEWNS provides the child with a new mount namespace (requires ADMIN capability)
@@ -224,13 +224,14 @@ def contain(command, image_name, image_dir, container_id, container_dir):
 
 
 @cli.command(context_settings=dict(ignore_unknown_options=True,))
+@click.option('--cpu-shares', help='CPU shares (relative weight)', default=0)
 @click.option('--image-name', '-i', help='Image name', default='ubuntu-export')
 @click.option('--image-dir', help='Images directory',
               default='.')
 @click.option('--container-dir', help='Containers directory',
               default='./build/containers')
 @click.argument('Command', required=True, nargs=-1)
-def run(image_name, image_dir, container_dir, command):
+def run(cpu_shares, image_name, image_dir, container_dir, command):
     """
     Run function that is called via the 'run' arugment in the command-line command
 
@@ -253,9 +254,9 @@ def run(image_name, image_dir, container_dir, command):
     #         # something went wrong in contain()
     #         os._exit(1)
 
-    flags = linux.CLONE_NEWPID | linux.CLONE_NEWNS | linux.CLONE_NEWUTS
+    flags = (linux.CLONE_NEWPID | linux.CLONE_NEWNS | linux.CLONE_NEWUTS | linux.CLONE_NEWNET)
     callback_args = (command, image_name, image_dir, container_id,
-                     container_dir)
+                     container_dir, cpu_shares)
     pid = linux.clone(contain, flags, callback_args)
 
     # This is the parent, pid contains the PID of the forked process
