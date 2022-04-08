@@ -208,7 +208,7 @@ def _create_mounts(new_root):
     makedev(os.path.join(new_root, 'dev'))
 
 
-def contain(command, image_name, image_dir, container_id, container_dir, cpu_shares, memory, memory_swap):
+def contain(command, image_name, image_dir, container_id, container_dir, cpu_shares, memory, memory_swap, user):
     """
     Contain function that is used to actually create the contained space.
 
@@ -262,6 +262,20 @@ def contain(command, image_name, image_dir, container_id, container_dir, cpu_sha
     # rmdir the old_root dir
     os.rmdir('/old_root')
 
+    if user != '':
+        if ':' not in user:
+            user += ':0'
+
+        uid, gid = user.split(':')
+
+        try:
+            os.setgid(int(gid))
+            os.setuid(int(uid))
+
+        except ValueError as e:
+            print('UserID and GroupID have to be numeric values')
+            raise e
+
     os.execvp(command[0], command)
 
 
@@ -273,13 +287,14 @@ def contain(command, image_name, image_dir, container_id, container_dir, cpu_sha
               ' Specify -1 to enable unlimited swap.',
               default=None)
 @click.option('--cpu-shares', help='CPU shares (relative weight)', default=0)
+@click.option('--user', help='UID (format: <uid>[:<gid>])', default='')
 @click.option('--image-name', '-i', help='Image name', default='ubuntu-export')
 @click.option('--image-dir', help='Images directory',
               default='.')
 @click.option('--container-dir', help='Containers directory',
               default='./build/containers')
 @click.argument('Command', required=True, nargs=-1)
-def run(memory, memory_swap, cpu_shares, image_name, image_dir, container_dir, command):
+def run(memory, memory_swap, cpu_shares, user, image_name, image_dir, container_dir, command):
     """
     Run function that is called via the 'run' arugment in the command-line command
 
@@ -304,7 +319,7 @@ def run(memory, memory_swap, cpu_shares, image_name, image_dir, container_dir, c
 
     flags = (linux.CLONE_NEWPID | linux.CLONE_NEWNS | linux.CLONE_NEWUTS | linux.CLONE_NEWNET)
     callback_args = (command, image_name, image_dir, container_id,
-                     container_dir, cpu_shares, memory, memory_swap)
+                     container_dir, cpu_shares, memory, memory_swap, user)
     pid = linux.clone(contain, flags, callback_args)
 
     # This is the parent, pid contains the PID of the forked process
