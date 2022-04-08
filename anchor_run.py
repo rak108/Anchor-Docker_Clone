@@ -32,6 +32,7 @@ import traceback
 import linux
 
 import stat
+from datetime import datetime
 
 
 def _get_image_path(image_name, image_dir, image_suffix='tar'):
@@ -298,6 +299,7 @@ def run(memory, memory_swap, cpu_shares, user, image_name, image_dir, container_
     """
     Run function that is called via the 'run' arugment in the command-line command
 
+    :param user: User ID and Group ID of the non-root user running the container
     :param image_name: Physical file name of Image
     :param image_dir: Directory path of image 
     :param container_dir: Directory path of container to be made
@@ -322,9 +324,24 @@ def run(memory, memory_swap, cpu_shares, user, image_name, image_dir, container_
                      container_dir, cpu_shares, memory, memory_swap, user)
     pid = linux.clone(contain, flags, callback_args)
 
+    now = datetime.now()
+ 
+    log = str(pid) + "," + str(container_id) + "," + str(image_name) + "," + str(' '.join(command)) + "," + now.strftime("%d/%m/%Y %H:%M:%S") + "\n"
+    
+    with open("containers.txt","a") as f:
+    	f.write(log)
+
     # This is the parent, pid contains the PID of the forked process
     # wait for the forked child, fetch the exit status
     _, status = os.waitpid(pid, 0)
+    
+    with open("containers.txt","r") as f:
+    	lines = f.readlines()
+    with open("containers.txt","w") as f:
+    	for line in lines:
+    		if line.strip("\n") != log.strip("\n"):
+    			f.write(line)
+
     print('{} exited with status {}'.format(pid, status))
 
 
