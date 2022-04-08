@@ -147,6 +147,21 @@ def makedev(dev_path):
         os.mknod(os.path.join(dev_path, device),
                  0o666 | dev_type, os.makedev(major, minor))
 
+def _setup_cpu_cgroup(container_id, cpu_shares):
+    CPU_CGROUP_BASEDIR = '/sys/fs/cgroup/cpu'
+    container_cpu_cgroup_dir = os.path.join(
+        CPU_CGROUP_BASEDIR, 'anchor', container_id)
+
+    # Insert the container to new cpu cgroup named 'anchor/container_id'
+    if not os.path.exists(container_cpu_cgroup_dir):
+        os.makedirs(container_cpu_cgroup_dir)
+    tasks_file = os.path.join(container_cpu_cgroup_dir, 'tasks')
+    open(tasks_file, 'w').write(str(os.getpid()))
+
+    # If (cpu_shares != 0)  => set the 'cpu.shares' in our cpu cgroup
+    if cpu_shares:
+        cpu_shares_file = os.path.join(container_cpu_cgroup_dir, 'cpu.shares')
+        open(cpu_shares_file, 'w').write(str(cpu_shares))
 
 def _create_mounts(new_root):
     # In order to actually access the configurations of the container being created, we require these 3 pseudo-filesystems
@@ -181,6 +196,8 @@ def contain(command, image_name, image_dir, container_id, container_dir, cpu_sha
     :param container_dir: Directory path of container to be made
 
     """
+    _setup_cpu_cgroup(container_id, cpu_shares)
+    
     try:
         # create a new mount namespace
         # linux.unshare(linux.CLONE_NEWNS)
