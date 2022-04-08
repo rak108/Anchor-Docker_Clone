@@ -16,13 +16,26 @@ We're using Python 3.8 for the `run` command, let's try sticking to that.
       python3 setup.py install
       cd ..
       ```
-4. Run the `anchor_run.py` file according to instructions given in the file.
+4. Install the Tabulate module by running
+    - ```bash
+      pip install tabulate
+      ```
+5. Run the `anchor_run.py` file according to instructions given in the file.
+6. Run `anchor_ps.py` when a container is running to get the list of running containers.
 
 ## Basic Guide
 `ubuntu-export.tar` is the base image we would be using for now since it has the Ubuntu filesystem loaded from a running container. You can test your working by running basic commands within the container. 
 
+### Anchor `run`
 Example:
 ```bash
 python3 anchor_run.py run -i ubuntu-export /bin/echo "Hello World"
 ```
 Should print Hello World and exit.
+
+### Anchor `ps`
+Example:
+```bash
+python3 anchor_ps.py
+```
+

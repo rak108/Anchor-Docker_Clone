@@ -32,6 +32,7 @@ import traceback
 import linux
 
 import stat
+from datetime import datetime
 
 
 def _get_image_path(image_name, image_dir, image_suffix='tar'):
@@ -148,6 +149,44 @@ def makedev(dev_path):
                  0o666 | dev_type, os.makedev(major, minor))
 
 
+def _setup_cpu_cgroup(container_id, cpu_shares):
+    CPU_CGROUP_BASEDIR = '/sys/fs/cgroup/cpu'
+    container_cpu_cgroup_dir = os.path.join(
+        CPU_CGROUP_BASEDIR, 'anchor', container_id)
+
+    # Insert the container to new cpu cgroup named 'anchor/container_id'
+    if not os.path.exists(container_cpu_cgroup_dir):
+        os.makedirs(container_cpu_cgroup_dir)
+    tasks_file = os.path.join(container_cpu_cgroup_dir, 'tasks')
+    open(tasks_file, 'w').write(str(os.getpid()))
+
+    # If (cpu_shares != 0)  => set the 'cpu.shares' in our cpu cgroup
+    if cpu_shares:
+        cpu_shares_file = os.path.join(container_cpu_cgroup_dir, 'cpu.shares')
+        open(cpu_shares_file, 'w').write(str(cpu_shares))
+
+
+def _setup_memory_cgroup(container_id, memory, memory_swap):
+    MEMORY_CGROUP_BASEDIR = '/sys/fs/cgroup/memory'
+    container_mem_cgroup_dir = os.path.join(
+        MEMORY_CGROUP_BASEDIR, 'anchor', container_id)
+
+    # Insert the container to new memory cgroup named 'anchor/container_id'
+    if not os.path.exists(container_mem_cgroup_dir):
+        os.makedirs(container_mem_cgroup_dir)
+    tasks_file = os.path.join(container_mem_cgroup_dir, 'tasks')
+    open(tasks_file, 'w').write(str(os.getpid()))
+
+    if memory is not None:
+        mem_limit_in_bytes_file = os.path.join(
+            container_mem_cgroup_dir, 'memory.limit_in_bytes')
+        open(mem_limit_in_bytes_file, 'w').write(str(memory))
+    if memory_swap is not None:
+        memsw_limit_in_bytes_file = os.path.join(
+            container_mem_cgroup_dir, 'memory.memsw.limit_in_bytes')
+        open(memsw_limit_in_bytes_file, 'w').write(str(memory_swap))
+
+
 def _create_mounts(new_root):
     # In order to actually access the configurations of the container being created, we require these 3 pseudo-filesystems
     # proc: information about the real runtime system configurations
@@ -170,7 +209,7 @@ def _create_mounts(new_root):
     makedev(os.path.join(new_root, 'dev'))
 
 
-def contain(command, image_name, image_dir, container_id, container_dir, cpu_shares):
+def contain(command, image_name, image_dir, container_id, container_dir, cpu_shares, memory, memory_swap, user):
     """
     Contain function that is used to actually create the contained space.
 
@@ -181,6 +220,10 @@ def contain(command, image_name, image_dir, container_id, container_dir, cpu_sha
     :param container_dir: Directory path of container to be made
 
     """
+
+    _setup_cpu_cgroup(container_id, cpu_shares)
+    _setup_memory_cgroup(container_id, memory, memory_swap)
+
     try:
         # create a new mount namespace
         # linux.unshare(linux.CLONE_NEWNS)
@@ -220,21 +263,43 @@ def contain(command, image_name, image_dir, container_id, container_dir, cpu_sha
     # rmdir the old_root dir
     os.rmdir('/old_root')
 
+    if user != '':
+        if ':' not in user:
+            user += ':0'
+
+        uid, gid = user.split(':')
+
+        try:
+            os.setgid(int(gid))
+            os.setuid(int(uid))
+
+        except ValueError as e:
+            print('UserID and GroupID have to be numeric values')
+            raise e
+
     os.execvp(command[0], command)
 
 
 @cli.command(context_settings=dict(ignore_unknown_options=True,))
+@click.option('--memory', help='Memory limit in bytes.'
+              ' Use suffixes to represent larger units (k, m, g)',
+              default=None)
+@click.option('--memory-swap', help='A positive integer equal to memory plus swap.'
+              ' Specify -1 to enable unlimited swap.',
+              default=None)
 @click.option('--cpu-shares', help='CPU shares (relative weight)', default=0)
+@click.option('--user', help='UID (format: <uid>[:<gid>])', default='')
 @click.option('--image-name', '-i', help='Image name', default='ubuntu-export')
 @click.option('--image-dir', help='Images directory',
               default='.')
 @click.option('--container-dir', help='Containers directory',
               default='./build/containers')
 @click.argument('Command', required=True, nargs=-1)
-def run(cpu_shares, image_name, image_dir, container_dir, command):
+def run(memory, memory_swap, cpu_shares, user, image_name, image_dir, container_dir, command):
     """
     Run function that is called via the 'run' arugment in the command-line command
 
+    :param user: User ID and Group ID of the non-root user running the container
     :param image_name: Physical file name of Image
     :param image_dir: Directory path of image 
     :param container_dir: Directory path of container to be made
@@ -256,12 +321,27 @@ def run(cpu_shares, image_name, image_dir, container_dir, command):
 
     flags = (linux.CLONE_NEWPID | linux.CLONE_NEWNS | linux.CLONE_NEWUTS | linux.CLONE_NEWNET)
     callback_args = (command, image_name, image_dir, container_id,
-                     container_dir, cpu_shares)
+                     container_dir, cpu_shares, memory, memory_swap, user)
     pid = linux.clone(contain, flags, callback_args)
+
+    now = datetime.now()
+ 
+    log = str(pid) + "," + str(container_id) + "," + str(image_name) + "," + str(' '.join(command)) + "," + now.strftime("%d/%m/%Y %H:%M:%S") + "\n"
+    
+    with open("containers.txt","a") as f:
+    	f.write(log)
 
     # This is the parent, pid contains the PID of the forked process
     # wait for the forked child, fetch the exit status
     _, status = os.waitpid(pid, 0)
+    
+    with open("containers.txt","r") as f:
+    	lines = f.readlines()
+    with open("containers.txt","w") as f:
+    	for line in lines:
+    		if line.strip("\n") != log.strip("\n"):
+    			f.write(line)
+
     print('{} exited with status {}'.format(pid, status))
 
 
